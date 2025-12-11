@@ -3,13 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ridesApi, participationsApi } from '../api/client';
 import type { Ride, Participant, Participation } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
+import { useRideSocket } from '../hooks/useRideSocket';
 import ParticipantsMap from '../components/ParticipantsMap';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { MapPin, Calendar, Clock, Hash, Navigation, LogOut, Trash2, Edit, Users, ArrowLeft, Star } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { io, Socket } from 'socket.io-client';
 import ConfirmationModal from '../components/ui/ConfirmationModal';
+import { MapPin, ArrowLeft } from 'lucide-react';
+
+// New Components
+import RideHeader from '../components/Ride/RideHeader';
+import RideActions from '../components/Ride/RideActions';
+import ParticipantsList from '../components/Ride/ParticipantsList';
 
 const RideDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -21,88 +25,15 @@ const RideDetails: React.FC = () => {
   const [updating, setUpdating] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [socket, setSocket] = useState<Socket | null>(null);
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Initialize Socket
-  useEffect(() => {
-    // Connect to backend
-    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:8000');
-    setSocket(newSocket);
-
-    return () => {
-      newSocket.close();
-    };
-  }, []);
+  // Socket Hook
+  const { socket } = useRideSocket(ride?.code, ride?.id, setParticipants);
 
   useEffect(() => {
     loadRideDetails();
-    
-    // Polling removed in favor of WebSockets
-    // But we still fetch initial data in loadRideDetails
   }, [id]);
-
-  // Socket Event Listeners
-  useEffect(() => {
-    if (!socket) {
-        console.log("Socket not initialized yet");
-        return;
-    }
-    if (!ride) {
-        console.log("Ride not loaded yet");
-        return;
-    }
-
-    console.log(`Attempting to join ride room: ${ride.code}`);
-    
-    // Join the "room" for this ride
-    socket.emit('join_ride', { ride_code: ride.code });
-
-    socket.on('connect', () => {
-        console.log("Socket Connected:", socket.id);
-        // Re-join on reconnect
-        socket.emit('join_ride', { ride_code: ride.code });
-    });
-
-    socket.on('message', (msg: any) => {
-        console.log("Socket Message:", msg);
-    });
-
-    // Handle incoming location updates
-    socket.on('location_update', (data: any) => {
-      console.log("Socket Update:", data);
-      
-      setParticipants(prevParticipants => {
-        const index = prevParticipants.findIndex(p => p.user_id === data.user_id);
-        
-        if (index !== -1) {
-          // Update existing participant
-          const updated = [...prevParticipants];
-          updated[index] = {
-            ...updated[index],
-            latitude: data.latitude,
-            longitude: data.longitude,
-            location_timestamp: data.location_timestamp
-          };
-          return updated;
-        } else {
-          // New participant found via socket? 
-          // (Ideally we should fetch full profile, but for now we might skip or rely on refresh)
-          // Since we only get location data, we can't fully create a participant without username.
-          // Strategy: If user unknown, maybe trigger a one-time API refresh or ignore until full sync.
-          // For now: let's re-fetch list if we see a stranger, or better:
-          // Just ignore strangers for "smoothness" and rely on periodic background sync or manual Refresh?
-          // Actually, let's keep it simple: Update local state if found.
-          return prevParticipants;
-        }
-      });
-    });
-
-    return () => {
-      socket.off('location_update');
-    };
-  }, [socket, ride]);
 
   const loadRideDetails = async () => {
     if (!id) return;
@@ -211,28 +142,13 @@ const RideDetails: React.FC = () => {
   };
 
   const handleSimulateLocation = async () => {
-    console.log("Simulate Move clicked");
-    if (!ride) {
-        console.error("No ride loaded");
-        return;
-    }
-    if (!myParticipation) {
-        console.error("No participation record for current user.");
-        return;
-    }
+    if (!ride || !myParticipation) return;
 
     setUpdating(true);
     
-    // 1. Determine Center
-    // Default to Munich if no one is active, otherwise average or just keep existing.
-    // For single user simulation, we just move ourselves.
+    // Default to Munich if no one is active
     const baseLat = 48.1351; 
     const baseLng = 11.5820;
-
-    // ... (rest of logic same as before but simplified for single user move)
-    // Actually, let's merge logic.
-    // If Simulate is clicked, we move OURSELVES.
-    // Use the logic we just wrote, but let's clean it up.
     
     try {
         const lat = baseLat + (Math.random() - 0.5) * 0.01;
@@ -274,7 +190,6 @@ const RideDetails: React.FC = () => {
   const handleGatherParticipants = async () => {
       if (!ride || !user) return;
       
-      console.log("Gathering all active participants...");
       setUpdating(true);
       
       // 1. Determine Center
@@ -296,13 +211,12 @@ const RideDetails: React.FC = () => {
       }
 
       // 2. Prepare updates
-      // Create a new participants array for immediate local update
       const newParticipants = participants.map(p => {
           // Generate random offset ~100m
           const lat = centerLat + (Math.random() - 0.5) * 0.002;
           const lng = centerLng + (Math.random() - 0.5) * 0.002;
           
-          // Emit socket (optimization: could batch? Backend handles 1 by 1)
+          // Emit socket
           if (socket) {
              socket.emit('update_location', {
                 ride_code: ride.code,
@@ -339,31 +253,12 @@ const RideDetails: React.FC = () => {
   };
 
   const handleLeaveRide = async () => {
-    console.log("handleLeaveRide called");
-    console.log("Current myParticipation:", myParticipation);
-    console.log("Current User:", user);
-
-    // We already check availability in render, but safety first
-    if (!myParticipation) {
-        console.error("Cannot leave: No participation found");
-        alert("Error: No participation found to leave.");
-        return;
-    }
+    if (!myParticipation) return;
     
-    // Confirm removed for now to ensure it works without browser dialog interference
-    // if (!confirm('Are you sure you want to leave this ride?')) {
-    //    console.log("Leave cancelled by user");
-    //    return;
-    // }
-
     try {
-      console.log("Calling participationsApi.leaveRide with ID:", myParticipation.id);
       await participationsApi.leaveRide(myParticipation.id);
-      console.log("Leave successful, navigating home");
       navigate('/'); 
     } catch (err: any) {
-      console.error("Leave error:", err);
-      alert(`Error leaving ride: ${err.response?.data?.detail || err.message}`);
       setError(err.response?.data?.detail || 'Error leaving ride');
     }
   };
@@ -373,13 +268,9 @@ const RideDetails: React.FC = () => {
     
     setIsDeleting(true);
     try {
-      console.log("Calling ridesApi.deleteRide...");
       await ridesApi.deleteRide(ride.id);
-      console.log("Delete successful. Navigating home.");
       navigate('/');
     } catch (err: any) {
-      console.error("Delete error:", err);
-      // alert(`Error deleting ride: ${err.response?.data?.detail || err.message}`);
       setError(err.response?.data?.detail || 'Error deleting ride');
       setShowDeleteConfirm(false); 
       setIsDeleting(false);
@@ -407,7 +298,7 @@ const RideDetails: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto pb-12">
-      <div className="mb-6">
+      <div className="mb-6 flex justify-between items-center">
         <button 
           onClick={() => navigate('/')}
           className="text-gray-500 hover:text-gray-900 flex items-center gap-2 text-sm font-medium transition-colors"
@@ -423,194 +314,62 @@ const RideDetails: React.FC = () => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Details */}
+        {/* Left Column: Details & Map */}
         <div className="lg:col-span-2 space-y-6">
-          <Card className="p-8">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">{ride.title}</h1>
-                <div className="flex items-center gap-3">
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    ride.is_active 
-                      ? "bg-green-100 text-green-700" 
-                      : "bg-gray-100 text-gray-600"
-                  }`}>
-                    {ride.is_active ? "Active Ride" : "Inactive"}
-                  </span>
-                  <div className="flex items-center gap-1 text-gray-500 text-sm">
-                    <Hash size={14} /> Code: <span className="font-mono font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">{ride.code}</span>
-                  </div>
+          <RideHeader 
+            ride={ride} 
+            isOwner={isOwner} 
+            onDelete={() => setShowDeleteConfirm(true)} 
+          />
+          
+          <Card className="overflow-hidden" noPadding>
+            <div className="p-4 border-b border-gray-100 bg-gray-50">
+                <div className="flex justify-between items-center">
+                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                        <MapPin size={18} /> Live Map
+                    </h3>
+                    {participants.filter(p => !p.latitude || !p.longitude).length > 0 && (
+                        <span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded-full font-medium">
+                            Waiting for location from {participants.filter(p => !p.latitude || !p.longitude).length} participant(s)
+                        </span>
+                    )}
                 </div>
-              </div>
-              
-              {isOwner && (
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => navigate(`/rides/${ride.id}/edit`)}
-                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                  >
-                    <Edit size={20} />
-                  </button>
-                  <button 
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={20} />
-                  </button>
+            </div>
+            {participants.length > 0 ? (
+                <ParticipantsMap 
+                    participants={participants} 
+                    height="400px" 
+                    organizerId={ride.created_by_user_id}
+                />
+            ) : (
+                <div className="h-[400px] flex items-center justify-center bg-gray-50 text-gray-400">
+                    No active participants to show on map.
                 </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 text-sm gap-y-4 gap-x-8 mb-8">
-               <div className="col-span-2">
-                <h3 className="text-gray-400 font-medium mb-1 flex items-center gap-2"><MapPin size={16} /> Description</h3>
-                <p className="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl">
-                  {ride.description || "No description provided."}
-                </p>
-               </div>
-               
-               <div>
-                 <h3 className="text-gray-400 font-medium mb-1 flex items-center gap-2"><Calendar size={16} /> Date</h3>
-                 <p className="text-gray-900 font-medium">{new Date(ride.start_time).toLocaleDateString()}</p>
-               </div>
-
-               <div>
-                 <h3 className="text-gray-400 font-medium mb-1 flex items-center gap-2"><Clock size={16} /> Time</h3>
-                 <p className="text-gray-900 font-medium">{new Date(ride.start_time).toLocaleTimeString()}</p>
-               </div>
-            </div>
-
-            {/* Actions for Participant */}
-            <div className="flex gap-3 border-t border-gray-100 pt-6">
-              {!myParticipation && (
-                <Button onClick={handleJoinRide} className="w-full sm:w-auto">
-                  {isOwner ? "Join as Leader" : "Join Ride"}
-                </Button>
-              )}
-              {myParticipation && (
-                <>
-                  <Button 
-                    onClick={handleUpdateLocation} 
-                    isLoading={updating}
-                  >
-                    <Navigation size={18} className="mr-2" />
-                    Update Location
-                  </Button>
-                  <Button 
-                    variant="ghost"
-                    onClick={handleSimulateLocation}
-                    disabled={updating}
-                    className="text-primary-600 bg-primary-50"
-                  >
-                    Simulate Move
-                  </Button>
-                  <Button 
-                    variant="ghost"
-                    onClick={handleGatherParticipants}
-                    disabled={updating}
-                    className="text-purple-600 bg-purple-50"
-                  >
-                    Gather All
-                  </Button>
-                  {isOwner ? (
-                    <Button 
-                      variant="outline"
-                      disabled
-                      className="text-gray-400 border-gray-200 cursor-not-allowed opacity-60"
-                      title="Organizers cannot leave their own ride"
-                    >
-                      <LogOut size={18} className="mr-2" />
-                      Organizer cannot leave
-                    </Button>
-                  ) : (
-                    <Button 
-                      variant="outline"
-                      onClick={handleLeaveRide}
-                      className="text-red-600 border-red-200 hover:bg-red-50"
-                    >
-                      <LogOut size={18} className="mr-2" />
-                      Leave
-                    </Button>
-                  )}
-                </>
-              )}
-            </div>
+            )}
           </Card>
 
-          {participants.length > 0 && (
-            <Card className="overflow-hidden" noPadding>
-              <div className="p-4 border-b border-gray-100 bg-gray-50">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                  <MapPin size={18} /> Live Map
-                </h3>
-              </div>
-              <ParticipantsMap 
-                participants={participants} 
-                height="400px" 
-                organizerId={ride.created_by_user_id}
-              />
-            </Card>
-          )}
+           <Card className="p-6">
+                <h3 className="font-semibold text-gray-900 mb-4">Ride Controls</h3>
+                <RideActions 
+                    myParticipation={myParticipation}
+                    isOwner={isOwner}
+                    updating={updating}
+                    onJoin={handleJoinRide}
+                    onLeave={handleLeaveRide}
+                    onUpdateLocation={handleUpdateLocation}
+                    onSimulate={handleSimulateLocation}
+                    onGather={handleGatherParticipants}
+                />
+           </Card>
+
         </div>
 
         {/* Right Column: Participants */}
         <div className="space-y-6">
-          <Card className="p-6">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <Users size={20} className="text-primary-500" />
-              Participants ({participants.length})
-            </h3>
-            
-            {participants.length === 0 ? (
-              <p className="text-gray-400 text-sm text-center py-8">No participants yet.</p>
-            ) : (
-              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                {participants.map((p, index) => {
-                  const isOrganizer = ride?.created_by_user_id === p.user_id;
-                  return (
-                    <motion.div 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      key={p.id} 
-                      className={`flex items-start gap-3 p-3 rounded-lg transition-colors border ${
-                        isOrganizer 
-                          ? "bg-blue-50 border-blue-100" 
-                          : "hover:bg-gray-50 border-transparent hover:border-gray-100"
-                      }`}
-                    >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shrink-0 shadow-sm border-2 border-white ${
-                        isOrganizer 
-                          ? "bg-gradient-to-br from-blue-500 to-blue-700" 
-                          : "bg-gradient-to-br from-primary-400 to-primary-600"
-                      }`}>
-                        {isOrganizer ? <Star size={20} fill="currentColor" className="text-white/90" /> : index}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className={`font-medium truncate ${isOrganizer ? "text-blue-900" : "text-gray-900"}`}>
-                            {p.username}
-                          </p>
-                          {isOrganizer && (
-                            <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-blue-200">
-                              ORG
-                            </span>
-                          )}
-                        </div>
-                        {p.location_timestamp ? (
-                           <p className="text-xs text-green-600 flex items-center gap-1 mt-0.5">
-                             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                             Active {new Date(p.location_timestamp).toLocaleTimeString()}
-                           </p>
-                        ) : (
-                          <p className="text-xs text-gray-400 mt-0.5">No location data</p>
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
+          <ParticipantsList 
+            participants={participants}
+            organizerId={ride.created_by_user_id}
+          />
         </div>
       </div>
     

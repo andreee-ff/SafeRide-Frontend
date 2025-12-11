@@ -14,6 +14,8 @@ const CreateRide: React.FC = () => {
   const [startTime, setStartTime] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [createdRide, setCreatedRide] = useState<any | null>(null);
+  const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,7 +31,7 @@ const CreateRide: React.FC = () => {
       };
 
       const newRide = await ridesApi.createRide(rideData);
-      navigate(`/rides/${newRide.id}`);
+      setCreatedRide(newRide);
     } catch (err: any) {
       console.error('Error creating ride:', err);
       setError(err.response?.data?.detail || 'Error creating ride');
@@ -38,8 +40,65 @@ const CreateRide: React.FC = () => {
     }
   };
 
+  const handleCopyCode = () => {
+    if (createdRide?.code) {
+      navigator.clipboard.writeText(createdRide.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  if (createdRide) {
+    return (
+      <div className="max-w-xl mx-auto py-12 px-4">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+        >
+          <Card className="p-8 text-center">
+            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Calendar size={32} />
+            </div>
+            
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Ride Created Successfully!</h2>
+            <p className="text-gray-500 mb-8">Your ride is ready. Share this code with your friends so they can join.</p>
+            
+            <div className="bg-gray-50 rounded-2xl p-6 mb-8 border border-gray-100">
+              <p className="text-sm text-gray-400 uppercase tracking-wider font-medium mb-2">Ride Code</p>
+              <div 
+                onClick={handleCopyCode}
+                className="text-4xl font-mono font-bold text-primary-600 tracking-widest cursor-pointer hover:scale-105 transition-transform select-all"
+              >
+                {createdRide.code}
+              </div>
+              <p className="text-xs text-gray-400 mt-2 h-4">
+                {copied ? '✨ Copied to clipboard!' : 'Click code to copy'}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Button 
+                onClick={() => navigate(`/rides/${createdRide.id}`)}
+                size="lg"
+                className="w-full"
+              >
+                Go to Ride Dashboard
+              </Button>
+              <button 
+                onClick={() => navigate('/dashboard')}
+                className="text-gray-500 hover:text-gray-700 text-sm font-medium py-2"
+              >
+                Back to Main Dashboard
+              </button>
+            </div>
+          </Card>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-2xl mx-auto py-8">
+    <div className="max-w-2xl mx-auto py-8 px-4">
       <div className="mb-6">
         <button 
           onClick={() => navigate(-1)}

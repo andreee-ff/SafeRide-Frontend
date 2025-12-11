@@ -58,6 +58,9 @@ const RideCard: React.FC<RideCardProps> = ({ ride, participantCount: initialCoun
             <Calendar size={14} />
             {new Date(ride.start_time).toLocaleDateString()}
           </div>
+          
+
+
           <div className="flex items-center gap-1.5">
             <Users size={14} />
             {initialCount ?? 0} Cyclists
