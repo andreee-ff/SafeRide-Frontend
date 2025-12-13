@@ -12,7 +12,8 @@ import { MapPin, ArrowLeft } from 'lucide-react';
 
 // New Components
 import RideHeader from '../components/Ride/RideHeader';
-import RideActions from '../components/Ride/RideActions';
+import DebugControls from '../components/Ride/DebugControls';
+
 import ParticipantsList from '../components/Ride/ParticipantsList';
 
 const RideDetails: React.FC = () => {
@@ -42,36 +43,46 @@ const RideDetails: React.FC = () => {
       setLoading(true);
       const rideId = parseInt(id);
       
-      const [rideData, myParticipationsData] = await Promise.all([
-        ridesApi.getRideById(rideId),
-        participationsApi.getMyParticipations()
-      ]);
-
-      setRide(rideData);
-      
+      // 1. Fetch Ride Public Data (Priority)
       try {
-        const participantsData = await participationsApi.getRideParticipations(rideId);
-        
-        // Sort: Organizer always first (index 0 -> #1)
-        if (rideData) {
-            participantsData.sort((a, b) => {
-                if (a.user_id === rideData.created_by_user_id) return -1;
-                if (b.user_id === rideData.created_by_user_id) return 1;
-                return 0; // Keep original order for others
-            });
-        }
-        
-        setParticipants(participantsData);
-      } catch (err: any) {
-        if (err.response?.status === 404) {
-          setParticipants([]);
-        } else {
-          throw err;
-        }
+          const rideData = await ridesApi.getRideById(rideId);
+          setRide(rideData);
+
+          // 2. Fetch Participations (Public)
+          try {
+             const participantsData = await participationsApi.getRideParticipations(rideId);
+             if (rideData) {
+                participantsData.sort((a, b) => {
+                    if (a.user_id === rideData.created_by_user_id) return -1;
+                    if (b.user_id === rideData.created_by_user_id) return 1;
+                    return 0;
+                });
+             }
+             setParticipants(Array.isArray(participantsData) ? participantsData : []);
+             console.log("Participants Loaded:", participantsData);
+          } catch (pErr) {
+             console.warn("Failed to load participants", pErr);
+             setParticipants([]);
+          }
+
+          // 3. Fetch My Participation (Authenticated)
+          if (user) {
+              try {
+                 const myParticipationsData = await participationsApi.getMyParticipations();
+                 const myPart = myParticipationsData.find(p => p.ride_id === rideId && p.user_id === user.id);
+                 setMyParticipation(myPart || null);
+              } catch (authErr) {
+                 console.warn("User not authenticated or failed to fetch participations", authErr);
+                 setMyParticipation(null);
+              }
+          } else {
+              setMyParticipation(null);
+          }
+
+      } catch (rideErr: any) {
+          throw rideErr; // If main ride load fails, we throw to outer catch
       }
       
-      const myPart = myParticipationsData.find(p => p.ride_id === rideId && p.user_id === user?.id);
-      setMyParticipation(myPart || null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error loading ride details');
     } finally {
@@ -88,11 +99,13 @@ const RideDetails: React.FC = () => {
         navigator.geolocation.getCurrentPosition(
           async (position) => {
             try {
+              const timestamp = new Date(position.timestamp).toISOString();
+
               // 1. Send to API (Persist)
               await participationsApi.updateLocation(myParticipation.id, {
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude,
-                location_timestamp: new Date().toISOString()
+                location_timestamp: timestamp
               });
 
               // 2. Emit to Socket (Real-time Broadcast)
@@ -101,7 +114,8 @@ const RideDetails: React.FC = () => {
                     ride_code: ride.code,
                     user_id: user?.id,
                     latitude: position.coords.latitude,
-                    longitude: position.coords.longitude
+                    longitude: position.coords.longitude,
+                    location_timestamp: timestamp
                 });
               }
 
@@ -141,105 +155,9 @@ const RideDetails: React.FC = () => {
     }
   };
 
-  const handleSimulateLocation = async () => {
-    if (!ride || !myParticipation) return;
 
-    setUpdating(true);
-    
-    // Default to Munich if no one is active
-    const baseLat = 48.1351; 
-    const baseLng = 11.5820;
-    
-    try {
-        const lat = baseLat + (Math.random() - 0.5) * 0.01;
-        const lng = baseLng + (Math.random() - 0.5) * 0.01;
 
-        await participationsApi.updateLocation(myParticipation.id, {
-            latitude: lat,
-            longitude: lng,
-            location_timestamp: new Date().toISOString()
-        });
-        
-        if (socket) {
-            socket.emit('update_location', {
-                ride_code: ride.code,
-                user_id: user?.id,
-                latitude: lat,
-                longitude: lng
-            });
-        }
-        
-        // Optimistic update
-        setParticipants(prev => {
-             const idx = prev.findIndex(p => p.user_id === user?.id);
-             if (idx !== -1) {
-                 const updated = [...prev];
-                 updated[idx] = { ...updated[idx], latitude: lat, longitude: lng, location_timestamp: new Date().toISOString() };
-                 return updated;
-             }
-             return prev;
-        });
 
-    } catch (err: any) {
-        setError("Simulation failed: " + err.message);
-    } finally {
-        setUpdating(false);
-    }
-  };
-
-  const handleGatherParticipants = async () => {
-      if (!ride || !user) return;
-      
-      setUpdating(true);
-      
-      // 1. Determine Center
-      let centerLat = 48.1351;
-      let centerLng = 11.5820;
-      
-      // Try to find ME (robust ID comparison)
-      const me = participants.find(p => String(p.user_id) === String(user.id));
-      if (me && me.latitude && me.longitude) {
-          centerLat = Number(me.latitude);
-          centerLng = Number(me.longitude);
-      } else {
-          // Fallback: Find anyone with valid coords
-          const anyone = participants.find(p => p.latitude && p.longitude);
-          if (anyone) {
-            centerLat = Number(anyone.latitude);
-            centerLng = Number(anyone.longitude);
-          }
-      }
-
-      // 2. Prepare updates
-      const newParticipants = participants.map(p => {
-          // Generate random offset ~100m
-          const lat = centerLat + (Math.random() - 0.5) * 0.002;
-          const lng = centerLng + (Math.random() - 0.5) * 0.002;
-          
-          // Emit socket
-          if (socket) {
-             socket.emit('update_location', {
-                ride_code: ride.code,
-                user_id: p.user_id,
-                latitude: lat,
-                longitude: lng
-             });
-          }
-
-          // Return updated participant objects for local state
-          return {
-              ...p,
-              latitude: lat,
-              longitude: lng,
-              location_timestamp: new Date().toISOString()
-          };
-      });
-      
-      // 3. Update State Immediately (Visual Feedback)
-      setParticipants(newParticipants);
-      
-      setUpdating(false);
-  };
 
   const handleJoinRide = async () => {
     if (!ride) return;
@@ -319,14 +237,26 @@ const RideDetails: React.FC = () => {
           <RideHeader 
             ride={ride} 
             isOwner={isOwner} 
+            isParticipant={!!myParticipation}
+            updating={updating}
             onDelete={() => setShowDeleteConfirm(true)} 
+            onJoin={handleJoinRide}
+            onLeave={handleLeaveRide}
+            onUpdateLocation={handleUpdateLocation}
           />
           
+          {/* Debug Controls (Compact) */}
+          {myParticipation && (
+             <div className="flex justify-end">
+                <DebugControls rideCode={ride.code} rideId={ride.id} />
+             </div>
+          )}
+
           <Card className="overflow-hidden" noPadding>
             <div className="p-4 border-b border-gray-100 bg-gray-50">
                 <div className="flex justify-between items-center">
                     <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                        <MapPin size={18} /> Live Map
+                        <MapPin size={18} /> Live Map <span className="text-gray-400 font-normal">({participants.length})</span>
                     </h3>
                     {participants.filter(p => !p.latitude || !p.longitude).length > 0 && (
                         <span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded-full font-medium">
@@ -340,6 +270,7 @@ const RideDetails: React.FC = () => {
                     participants={participants} 
                     height="400px" 
                     organizerId={ride.created_by_user_id}
+                    currentUserId={user?.id}
                 />
             ) : (
                 <div className="h-[400px] flex items-center justify-center bg-gray-50 text-gray-400">
@@ -348,20 +279,6 @@ const RideDetails: React.FC = () => {
             )}
           </Card>
 
-           <Card className="p-6">
-                <h3 className="font-semibold text-gray-900 mb-4">Ride Controls</h3>
-                <RideActions 
-                    myParticipation={myParticipation}
-                    isOwner={isOwner}
-                    updating={updating}
-                    onJoin={handleJoinRide}
-                    onLeave={handleLeaveRide}
-                    onUpdateLocation={handleUpdateLocation}
-                    onSimulate={handleSimulateLocation}
-                    onGather={handleGatherParticipants}
-                />
-           </Card>
-
         </div>
 
         {/* Right Column: Participants */}
@@ -369,10 +286,11 @@ const RideDetails: React.FC = () => {
           <ParticipantsList 
             participants={participants}
             organizerId={ride.created_by_user_id}
+            currentUserId={user?.id}
           />
         </div>
       </div>
-    
+
       <ConfirmationModal 
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}

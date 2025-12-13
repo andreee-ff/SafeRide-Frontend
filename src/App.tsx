@@ -14,6 +14,7 @@ import OwnedRidesPage from './pages/OwnedRidesPage';
 import JoinedRidesPage from './pages/JoinedRidesPage';
 import AvailableRidesPage from './pages/AvailableRidesPage';
 import Presentation from './pages/Presentation';
+import SleepMode from './pages/SleepMode';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -62,6 +63,7 @@ function AppRoutes() {
     <Routes>
       {/* Public routes */}
       <Route path="/presentation" element={<Presentation />} />
+      <Route path="/sleep" element={<SleepMode />} />
       <Route path="/login" element={
         <PublicRoute>
           <Login />

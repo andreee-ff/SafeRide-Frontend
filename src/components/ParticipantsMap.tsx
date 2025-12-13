@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
 import type { Participant } from "../api/types";
 
@@ -7,44 +7,17 @@ interface ParticipantsMapProps {
   height?: string;
   center?: { lat: number; lng: number };
   organizerId?: number;
+  currentUserId?: number;
 }
 
 const defaultCenter = { lat: 48.1351, lng: 11.5820 }; // Example: Munich
 const libraries: ("places" | "drawing" | "geometry" | "visualization")[] = [];
 
-export default function ParticipantsMap({ participants, height = "400px", center, organizerId }: ParticipantsMapProps) {
+export default function ParticipantsMap({ participants, height = "400px", center, organizerId, currentUserId }: ParticipantsMapProps) {
   // ... (existing hooks)
 
   // ... (inside return)
-      {participants.map((p, index) => {
-        // Skip if no location
-        if (!p.latitude || !p.longitude) return null;
 
-        const isOrganizer = Number(p.user_id) === Number(organizerId);
-        
-        // Debug first time to check IDs
-        if (index === 0) console.log("Map Debug:", { pID: p.user_id, orgID: organizerId, isOrg: isOrganizer });
-
-        return (
-          <MarkerF
-            key={p.id}
-            position={{ lat: Number(p.latitude), lng: Number(p.longitude) }}
-            title={p.username + (isOrganizer ? " (Organizer)" : "")}
-            zIndex={isOrganizer ? 100 : 1} // Organizer on top
-            options={{
-                icon: isOrganizer ? {
-                    url: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                } : undefined
-            }}
-            label={{
-              text: String(index + 1),
-              color: "white",
-              fontWeight: "bold",
-              className: "map-marker-label" 
-            }}
-          />
-        );
-      })}
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "", 
@@ -79,51 +52,94 @@ export default function ParticipantsMap({ participants, height = "400px", center
   const mapContainerStyle = {
     width: "100%",
     height: height,
-    // border: "2px solid red", // DEBUG: Visibility check - Removed
   };
 
-  const filtered = participants.filter(
+  const filtered = useMemo(() => participants.filter(
     (p) => p.latitude != null && p.longitude != null
-  );
+  ), [participants]);
 
-  console.log("ParticipantsMap Render:", { 
-      total: participants.length, 
-      filtered: filtered.length, 
-      isLoading: !isLoaded 
-  });
+
+  // Centering Priority:
+  // 1. Current User (follow me)
+  // 2. Organizer (follow leader if I am not on map?) - User said "Center on current user NOT organizer"
+  // 3. Fit Bounds (default)
   
-  filtered.forEach(p => console.log(`Marker: ${p.username} at ${p.latitude}, ${p.longitude}`));
+  // Actually, standard behavior for nav apps: Center on ME if I exist. If not, fit bounds.
 
-  const defaultMapCenter = center ||
-    (filtered.length > 0
-      ? { lat: filtered[0].latitude!, lng: filtered[0].longitude! }
-      : defaultCenter);
+  const defaultMapCenter = center || defaultCenter;
 
   const onLoad = useCallback((map: any) => {
-    console.log("Google Map Loaded");
     setMap(map);
   }, []);
 
   const onUnmount = useCallback(() => {
     setMap(null);
   }, []);
+  
+  // Track if we have initially centered
+  const isCentered = useRef(false);
+
+  // Track previous participant count to handle "joining" events
+  const prevParticipantCount = useRef(0);
 
   useEffect(() => {
     if (map && filtered.length > 0 && isLoaded) {
-      console.log("Fitting bounds for", filtered.length, "markers");
-      const bounds = new window.google.maps.LatLngBounds();
-      filtered.forEach((p) => {
-        bounds.extend({ lat: p.latitude!, lng: p.longitude! });
-      });
       
-      if (filtered.length === 1) {
-          map.setCenter({ lat: filtered[0].latitude!, lng: filtered[0].longitude! });
-          map.setZoom(15);
+      const me = currentUserId ? filtered.find(p => Number(p.user_id) === Number(currentUserId)) : null;
+
+      // Logic:
+      // 1. If "Me" exists, we want to center on "Me".
+      // 2. However, we also want to ensure everyone else is visible.
+      // 3. To avoid jumping: Only `fitBounds` if someone is currently OFF SCREEN.
+      
+      if (me) {
+          const myLoc = new window.google.maps.LatLng(Number(me.latitude), Number(me.longitude));
+          
+          // Pan to me first (keep me in center)
+          // We use panTo for smooth transition, but only if distance is significant to avoid micro-jitters?
+          // Actually, setCenter is fine for lock-on. panTo looks better.
+          map.panTo(myLoc);
+
+          // Now check bounds
+          const bounds = map.getBounds();
+          if (bounds) {
+              let anyoneOutside = false;
+              const newBounds = new window.google.maps.LatLngBounds();
+              
+              filtered.forEach((p) => {
+                  const loc = new window.google.maps.LatLng(Number(p.latitude), Number(p.longitude));
+                  newBounds.extend(loc); // Build the ideal bounds just in case
+                  
+                  if (!bounds.contains(loc)) {
+                      anyoneOutside = true;
+                  }
+              });
+
+              // If someone is outside, or if we haven't centered yet, verify bounds
+              if (anyoneOutside || !isCentered.current) {
+                  // Adjust zoom to fit everyone
+                   map.fitBounds(newBounds, {
+                      top: 50, right: 50, bottom: 50, left: 50
+                  });
+              }
+          }
+          isCentered.current = true;
+
       } else {
-          map.fitBounds(bounds);
+          // Fallback if I am not on map: Just fit everyone
+          // But only if count changed or first load, to avoid jitters
+          const shouldFit = !isCentered.current || filtered.length > prevParticipantCount.current;
+          
+          if (shouldFit) {
+             const bounds = new window.google.maps.LatLngBounds();
+             filtered.forEach(p => bounds.extend({ lat: Number(p.latitude), lng: Number(p.longitude) }));
+             map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
+             isCentered.current = true;
+          }
       }
+      prevParticipantCount.current = filtered.length;
     }
-  }, [map, filtered, isLoaded]);
+  }, [map, filtered, isLoaded, currentUserId]);
 
   if (!isLoaded) return <div style={{ height }} className="animate-pulse bg-gray-200 rounded-xl w-full" />;
 
@@ -140,27 +156,32 @@ export default function ParticipantsMap({ participants, height = "400px", center
         if (!p.latitude || !p.longitude) return null;
 
         const isOrganizer = Number(p.user_id) === Number(organizerId);
+        const isMe = Number(p.user_id) === Number(currentUserId);
+
+        // Common shape for all (Drop)
+        const markerPath = "M20,0 C12,0 5.5,6.5 5.5,14.5 C5.5,25.4 20,40 20,40 C20,40 34.5,25.4 34.5,14.5 C34.5,6.5 28,0 20,0 Z";
 
         return (
           <MarkerF
             key={p.id}
             position={{ lat: Number(p.latitude), lng: Number(p.longitude) }}
-            title={p.username + (isOrganizer ? " (Organizer)" : "")}
-            zIndex={isOrganizer ? 100 : 1}
-            icon={isOrganizer ? {
-                // Vector path similar to default Google marker
-                path: "M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z",
-                fillColor: "#2563EB", // Blue-600
+            title={p.username + (isOrganizer ? " (Organizer)" : isMe ? " (You)" : "")}
+            zIndex={isOrganizer ? 100 : isMe ? 90 : 1}
+            icon={{
+                path: markerPath,
+                fillColor: isOrganizer ? "#F59E0B" : isMe ? "#2563EB" : "#EA4335", // Gold, Blue, Red
                 fillOpacity: 1,
-                strokeColor: "#FFFFFF",
-                strokeWeight: 2,
-                scale: 1.2, // Slightly larger than default (1.0)
-                labelOrigin: new google.maps.Point(0, -30) // Position label in the head
-            } : undefined}
+                strokeColor: isOrganizer ? "#B45309" : isMe ? "#1E40AF" : "#B91C1C",
+                strokeWeight: 1,
+                scale: 1.25,
+                anchor: new google.maps.Point(20, 40), // Bottom tip
+                labelOrigin: new google.maps.Point(20, 15) // Center of the "Head"
+            }}
             label={{
-              text: isOrganizer ? "★" : String(index),
+              text: isOrganizer ? "ORG" : isMe ? "ME" : String(index + 1),
               color: "white",
               fontWeight: "bold",
+              fontSize: isOrganizer ? "14px" : "17px",
               className: "map-marker-label" 
             }}
           />

@@ -7,10 +7,24 @@ import Card from '../ui/Card';
 interface RideHeaderProps {
   ride: Ride;
   isOwner: boolean;
+  isParticipant: boolean;
+  updating?: boolean;
   onDelete: () => void;
+  onJoin?: () => void;
+  onLeave?: () => void;
+  onUpdateLocation?: () => void;
 }
 
-const RideHeader: React.FC<RideHeaderProps> = ({ ride, isOwner, onDelete }) => {
+const RideHeader: React.FC<RideHeaderProps> = ({ 
+  ride, 
+  isOwner, 
+  isParticipant,
+  updating,
+  onDelete,
+  onJoin,
+  onLeave,
+  onUpdateLocation
+}) => {
   const navigate = useNavigate();
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -27,7 +41,7 @@ const RideHeader: React.FC<RideHeaderProps> = ({ ride, isOwner, onDelete }) => {
 
   return (
     <Card className="p-8">
-      <div className="flex justify-between items-start mb-6">
+      <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">{ride.title}</h1>
           <div className="flex items-center gap-3">
@@ -58,22 +72,62 @@ const RideHeader: React.FC<RideHeaderProps> = ({ ride, isOwner, onDelete }) => {
           </div>
         </div>
         
-        {isOwner && (
-          <div className="flex gap-2">
-            <button 
-              onClick={() => navigate(`/rides/${ride.id}/edit`)}
-              className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-            >
-              <Edit size={20} />
-            </button>
-            <button 
-              onClick={onDelete}
-              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <Trash2 size={20} />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 self-end md:self-start">
+            {/* Functional Buttons */}
+            {!isParticipant && onJoin && (
+                <button
+                    onClick={onJoin}
+                    className="px-4 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-sm"
+                >
+                    {isOwner ? "Join as Leader" : "Join Ride"}
+                </button>
+            )}
+
+            {isParticipant && (
+                <>
+                    {onUpdateLocation && (
+                        <button
+                            onClick={onUpdateLocation}
+                            disabled={updating}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-sm disabled:opacity-70 disabled:cursor-wait"
+                        >
+                           <MapPin size={18} />
+                           {updating ? "Updating..." : "Update Location"}
+                        </button>
+                    )}
+                    
+                    {/* Owner cannot leave, others can */}
+                    {!isOwner && onLeave && (
+                         <button
+                            onClick={onLeave}
+                            className="px-4 py-2 border border-red-200 text-red-600 bg-white rounded-lg font-medium hover:bg-red-50 transition-colors"
+                        >
+                            Leave
+                        </button>
+                    )}
+                </>
+            )}
+
+            {isOwner && (
+                <>
+                    <div className="w-px h-8 bg-gray-200 mx-2"></div>
+                    <button 
+                    onClick={() => navigate(`/rides/${ride.id}/edit`)}
+                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                    title="Edit Ride"
+                    >
+                    <Edit size={20} />
+                    </button>
+                    <button 
+                    onClick={onDelete}
+                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Ride"
+                    >
+                    <Trash2 size={20} />
+                    </button>
+                </>
+            )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 text-sm gap-y-4 gap-x-8 mb-8">

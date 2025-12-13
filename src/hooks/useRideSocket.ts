@@ -56,7 +56,7 @@ export const useRideSocket = (
                         ...updated[index],
                         latitude: data.latitude,
                         longitude: data.longitude,
-                        location_timestamp: data.location_timestamp
+                        location_timestamp: data.location_timestamp || new Date().toISOString()
                     };
                     return updated;
                 } else {
@@ -69,7 +69,7 @@ export const useRideSocket = (
                         joined_at: new Date().toISOString(),
                         latitude: data.latitude,
                         longitude: data.longitude,
-                        location_timestamp: data.location_timestamp
+                        location_timestamp: data.location_timestamp || new Date().toISOString()
                     }];
                 }
             });
