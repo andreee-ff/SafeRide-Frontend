@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
+import { GoogleMap, MarkerF, useJsApiLoader, PolylineF } from "@react-google-maps/api";
 import type { Participant } from "../api/types";
+import { parseGPX, RoutePoint } from '../utils/gpxUtils';
+import { GOOGLE_MAPS_LIBRARIES } from '../constants/mapConstants';
 
 interface ParticipantsMapProps {
   participants: Participant[];
@@ -8,20 +10,27 @@ interface ParticipantsMapProps {
   center?: { lat: number; lng: number };
   organizerId?: number;
   currentUserId?: number;
+  gpxData?: string; // Optional GPX string to display route
 }
 
 const defaultCenter = { lat: 48.1351, lng: 11.5820 }; // Example: Munich
-const libraries: ("places" | "drawing" | "geometry" | "visualization")[] = [];
 
-export default function ParticipantsMap({ participants, height = "400px", center, organizerId, currentUserId }: ParticipantsMapProps) {
-  // ... (existing hooks)
+export default function ParticipantsMap({ participants, height = "400px", center, organizerId, currentUserId, gpxData }: ParticipantsMapProps) {
+  const [route, setRoute] = useState<RoutePoint[]>([]);
 
-  // ... (inside return)
+  useEffect(() => {
+    if (gpxData) {
+        // console.log("ParticipantsMap: Received gpxData");
+        const points = parseGPX(gpxData);
+        // console.log(`ParticipantsMap: Parsed ${points.length} points`);
+        setRoute(points);
+    }
+  }, [gpxData]);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "", 
-    libraries
+    libraries: GOOGLE_MAPS_LIBRARIES
   });
 
   if (!import.meta.env.VITE_GOOGLE_MAPS_API_KEY) {
@@ -83,24 +92,19 @@ export default function ParticipantsMap({ participants, height = "400px", center
   const prevParticipantCount = useRef(0);
 
   useEffect(() => {
-    if (map && filtered.length > 0 && isLoaded) {
+    if (map && isLoaded) {
       
       const me = currentUserId ? filtered.find(p => Number(p.user_id) === Number(currentUserId)) : null;
 
       // Logic:
       // 1. If "Me" exists, we want to center on "Me".
-      // 2. However, we also want to ensure everyone else is visible.
-      // 3. To avoid jumping: Only `fitBounds` if someone is currently OFF SCREEN.
+      // 2. However, we also want to ensure everyone else (and route) is visible.
       
       if (me) {
           const myLoc = new window.google.maps.LatLng(Number(me.latitude), Number(me.longitude));
-          
-          // Pan to me first (keep me in center)
-          // We use panTo for smooth transition, but only if distance is significant to avoid micro-jitters?
-          // Actually, setCenter is fine for lock-on. panTo looks better.
           map.panTo(myLoc);
 
-          // Now check bounds
+          // We check bounds mainly on initial load or if someone is outside
           const bounds = map.getBounds();
           if (bounds) {
               let anyoneOutside = false;
@@ -108,42 +112,45 @@ export default function ParticipantsMap({ participants, height = "400px", center
               
               filtered.forEach((p) => {
                   const loc = new window.google.maps.LatLng(Number(p.latitude), Number(p.longitude));
-                  newBounds.extend(loc); // Build the ideal bounds just in case
-                  
-                  if (!bounds.contains(loc)) {
-                      anyoneOutside = true;
-                  }
+                  newBounds.extend(loc);
+                  if (!bounds.contains(loc)) anyoneOutside = true;
               });
 
-              // If someone is outside, or if we haven't centered yet, verify bounds
+              // Also extend bounds to route if it exists
+              route.forEach(pt => newBounds.extend(pt));
+
               if (anyoneOutside || !isCentered.current) {
-                  // Adjust zoom to fit everyone
-                   map.fitBounds(newBounds, {
-                      top: 50, right: 50, bottom: 50, left: 50
-                  });
+                   map.fitBounds(newBounds, { top: 50, right: 50, bottom: 50, left: 50 });
               }
           }
           isCentered.current = true;
 
       } else {
-          // Fallback if I am not on map: Just fit everyone
-          // But only if count changed or first load, to avoid jitters
-          const shouldFit = !isCentered.current || filtered.length > prevParticipantCount.current;
+          // Fallback if I am not on map: Just fit everyone + route
+          const shouldFit = !isCentered.current || filtered.length > prevParticipantCount.current || route.length > 0;
           
-          if (shouldFit) {
+          if (shouldFit && (filtered.length > 0 || route.length > 0)) {
              const bounds = new window.google.maps.LatLngBounds();
              filtered.forEach(p => bounds.extend({ lat: Number(p.latitude), lng: Number(p.longitude) }));
+             route.forEach(pt => bounds.extend(pt));
              map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
              isCentered.current = true;
           }
       }
       prevParticipantCount.current = filtered.length;
     }
-  }, [map, filtered, isLoaded, currentUserId]);
+  }, [map, filtered, isLoaded, currentUserId, route]);
 
   if (!isLoaded) return <div style={{ height }} className="animate-pulse bg-gray-200 rounded-xl w-full" />;
 
   return (
+    <div className="relative">
+      {/* Debug Badge for GPX */}
+      <div className="absolute top-2 left-2 z-[10] flex gap-2">
+        <div className={`px-2 py-1 rounded text-[10px] font-bold shadow-sm ${route.length > 0 ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+          GPX: {route.length > 0 ? `${route.length} pts` : 'NONE'}
+        </div>
+      </div>
     <GoogleMap
       mapContainerStyle={mapContainerStyle}
       zoom={12}
@@ -151,6 +158,20 @@ export default function ParticipantsMap({ participants, height = "400px", center
       onLoad={onLoad}
       onUnmount={onUnmount}
     >
+      {/* Route Line */}
+      {route.length > 0 && isLoaded && (
+        <PolylineF
+          path={route}
+          options={{
+            strokeColor: "#2563EB", // Primary Blue
+            strokeOpacity: 1,
+            strokeWeight: 8,
+            geodesic: true,
+            zIndex: 10, // Ensure it's above the map tiles but below markers
+          }}
+        />
+      )}
+
       {participants.map((p, index) => {
         // Skip if no location
         if (!p.latitude || !p.longitude) return null;
@@ -187,6 +208,7 @@ export default function ParticipantsMap({ participants, height = "400px", center
           />
         );
       })}
-    </GoogleMap>
+      </GoogleMap>
+    </div>
   );
 }

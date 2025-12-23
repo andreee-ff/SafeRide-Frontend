@@ -1,8 +1,9 @@
 import React from 'react';
-import { Users, Star } from 'lucide-react';
+import { Users, Star, MapPin } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { Participant } from '../../api/types';
 import Card from '../ui/Card';
+import { getDistance, formatDistance } from '../../utils/geoUtils';
 
 interface ParticipantsListProps {
   participants: Participant[];
@@ -11,6 +12,11 @@ interface ParticipantsListProps {
 }
 
 const ParticipantsList: React.FC<ParticipantsListProps> = ({ participants, organizerId, currentUserId }) => {
+  // Find current user's location to calculate distance to others
+  const me = participants.find(p => p.user_id === currentUserId);
+  const myLat = me?.latitude;
+  const myLon = me?.longitude;
+
   return (
     <Card className="p-6">
       <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
@@ -26,6 +32,13 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({ participants, organ
             const isOrganizer = organizerId === p.user_id;
             const isMe = currentUserId === p.user_id;
             
+            // Calculate distance if not me and both have coordinates
+            let distanceStr = "";
+            if (!isMe && myLat && myLon && p.latitude && p.longitude) {
+                const dist = getDistance(myLat, myLon, p.latitude, p.longitude);
+                distanceStr = formatDistance(dist);
+            }
+
             return (
               <motion.div 
                 initial={{ opacity: 0, x: -10 }}
@@ -47,26 +60,37 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({ participants, organ
                   {isOrganizer ? <Star size={20} fill="currentColor" className="text-white/90" /> : index + 1}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold ${isMe ? "text-blue-700" : "text-gray-900"}`}>
-                        {p.username}
-                    </span>
-                    {isOrganizer && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
-                        Organizer
-                      </span>
-                    )}
-                    {isMe && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">
-                        ME
-                      </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                        <span className={`font-semibold truncate ${isMe ? "text-blue-700" : "text-gray-900"}`}>
+                            {p.username}
+                        </span>
+                        {isOrganizer && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 shrink-0">
+                            Org
+                        </span>
+                        )}
+                    </div>
+                    
+                    {distanceStr && (
+                        <span className="text-xs font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded-full whitespace-nowrap border border-primary-100">
+                            {distanceStr}
+                        </span>
                     )}
                   </div>
+
                   {p.location_timestamp || (p.latitude && p.longitude) ? (
-                     <p className="text-xs text-green-600 flex items-center gap-1 mt-0.5">
-                       <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                       Active {p.location_timestamp ? new Date(p.location_timestamp).toLocaleTimeString() : ""}
-                     </p>
+                     <div className="flex items-center justify-between mt-0.5">
+                        <p className="text-[11px] text-green-600 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            Active {p.location_timestamp ? new Date(p.location_timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ""}
+                        </p>
+                        {!isMe && p.latitude && (
+                            <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                                <MapPin size={10} /> {p.latitude.toFixed(4)}, {p.longitude?.toFixed(4)}
+                            </span>
+                        )}
+                     </div>
                   ) : (
                     <p className="text-xs text-gray-400 mt-0.5">No location data</p>
                   )}
