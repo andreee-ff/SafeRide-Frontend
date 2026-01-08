@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ridesApi } from '../api/client';
+import { RouteVisibility } from '../api/types';
 import type { RideUpdate } from '../api/types';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Card from '../components/ui/Card';
 import { Type, FileText, Calendar, ArrowLeft, Power } from 'lucide-react';
 import { motion } from 'framer-motion';
+import RouteSelector from '../components/Ride/RouteSelector';
 
 const EditRide: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +16,8 @@ const EditRide: React.FC = () => {
   const [description, setDescription] = useState('');
   const [startTime, setStartTime] = useState('');
   const [isActive, setIsActive] = useState(true);
+  const [routeId, setRouteId] = useState<number | undefined>();
+  const [visibility, setVisibility] = useState<RouteVisibility>(RouteVisibility.ALWAYS);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -37,6 +41,8 @@ const EditRide: React.FC = () => {
         .slice(0, 16);
       setStartTime(localDateTime);
       setIsActive(ride.is_active);
+      setRouteId(ride.route_id || undefined);
+      setVisibility(ride.visibility);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error loading ride');
     } finally {
@@ -49,12 +55,21 @@ const EditRide: React.FC = () => {
     setError('');
     setUpdating(true);
 
+    const startDate = new Date(startTime);
+    if (isNaN(startDate.getTime())) {
+      setError('Please select a valid start time');
+      setUpdating(false);
+      return;
+    }
+
     try {
       const rideData: RideUpdate = {
         title,
         description: description || undefined,
-        start_time: new Date(startTime).toISOString(),
+        start_time: startDate.toISOString(),
         is_active: isActive,
+        route_id: routeId,
+        visibility: visibility,
       };
 
       await ridesApi.updateRide(parseInt(id!), rideData);
@@ -153,6 +168,13 @@ const EditRide: React.FC = () => {
                 className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500 border-gray-300"
               />
             </div>
+
+            <RouteSelector 
+              onRouteSelect={setRouteId}
+              onVisibilityChange={setVisibility}
+              selectedRouteId={routeId}
+              visibility={visibility}
+            />
 
             <div className="pt-4 flex gap-4">
               <Button 

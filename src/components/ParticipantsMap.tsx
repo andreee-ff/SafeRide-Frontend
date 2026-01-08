@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GoogleMap, MarkerF, useJsApiLoader, PolylineF } from "@react-google-maps/api";
 import type { Participant } from "../api/types";
-import { parseGPX, RoutePoint } from '../utils/gpxUtils';
+import { parseGpx, GpxPoint } from '../utils/gpxUtils';
 import { GOOGLE_MAPS_LIBRARIES } from '../constants/mapConstants';
 
 interface ParticipantsMapProps {
@@ -16,12 +16,12 @@ interface ParticipantsMapProps {
 const defaultCenter = { lat: 48.1351, lng: 11.5820 }; // Example: Munich
 
 export default function ParticipantsMap({ participants, height = "400px", center, organizerId, currentUserId, gpxData }: ParticipantsMapProps) {
-  const [route, setRoute] = useState<RoutePoint[]>([]);
+  const [route, setRoute] = useState<GpxPoint[]>([]);
 
   useEffect(() => {
     if (gpxData) {
         // console.log("ParticipantsMap: Received gpxData");
-        const points = parseGPX(gpxData);
+        const { points } = parseGpx(gpxData);
         // console.log(`ParticipantsMap: Parsed ${points.length} points`);
         setRoute(points);
     }
@@ -93,48 +93,32 @@ export default function ParticipantsMap({ participants, height = "400px", center
 
   useEffect(() => {
     if (map && isLoaded) {
-      
       const me = currentUserId ? filtered.find(p => Number(p.user_id) === Number(currentUserId)) : null;
 
-      // Logic:
-      // 1. If "Me" exists, we want to center on "Me".
-      // 2. However, we also want to ensure everyone else (and route) is visible.
-      
-      if (me) {
-          const myLoc = new window.google.maps.LatLng(Number(me.latitude), Number(me.longitude));
-          map.panTo(myLoc);
+      const newBounds = new window.google.maps.LatLngBounds();
+      let hasPoints = false;
 
-          // We check bounds mainly on initial load or if someone is outside
+      filtered.forEach((p) => {
+          const loc = new window.google.maps.LatLng(Number(p.latitude), Number(p.longitude));
+          newBounds.extend(loc);
+          hasPoints = true;
+      });
+
+      route.forEach(pt => {
+          newBounds.extend(pt);
+          hasPoints = true;
+      });
+
+      if (hasPoints && map) {
           const bounds = map.getBounds();
-          if (bounds) {
-              let anyoneOutside = false;
-              const newBounds = new window.google.maps.LatLngBounds();
-              
-              filtered.forEach((p) => {
-                  const loc = new window.google.maps.LatLng(Number(p.latitude), Number(p.longitude));
-                  newBounds.extend(loc);
-                  if (!bounds.contains(loc)) anyoneOutside = true;
-              });
-
-              // Also extend bounds to route if it exists
-              route.forEach(pt => newBounds.extend(pt));
-
-              if (anyoneOutside || !isCentered.current) {
-                   map.fitBounds(newBounds, { top: 50, right: 50, bottom: 50, left: 50 });
-              }
-          }
-          isCentered.current = true;
-
-      } else {
-          // Fallback if I am not on map: Just fit everyone + route
-          const shouldFit = !isCentered.current || filtered.length > prevParticipantCount.current || route.length > 0;
+          const shouldFit = !isCentered.current || (bounds && !newBounds.intersects(bounds));
           
-          if (shouldFit && (filtered.length > 0 || route.length > 0)) {
-             const bounds = new window.google.maps.LatLngBounds();
-             filtered.forEach(p => bounds.extend({ lat: Number(p.latitude), lng: Number(p.longitude) }));
-             route.forEach(pt => bounds.extend(pt));
-             map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
-             isCentered.current = true;
+          if (shouldFit || !isCentered.current) {
+            map.fitBounds(newBounds, { top: 50, right: 50, bottom: 50, left: 50 });
+            isCentered.current = true;
+          } else if (me) {
+            const myLoc = new window.google.maps.LatLng(Number(me.latitude), Number(me.longitude));
+            map.panTo(myLoc);
           }
       }
       prevParticipantCount.current = filtered.length;

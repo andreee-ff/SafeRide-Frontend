@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ridesApi, participationsApi } from '../api/client';
-import type { Ride, Participant, Participation } from '../api/types';
+import { ridesApi, participationsApi, routesApi } from '../api/client';
+import { Ride, Participant, Participation, RouteVisibility } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 import { useRideSocket } from '../hooks/useRideSocket';
 import ParticipantsMap from '../components/ParticipantsMap';
@@ -34,12 +34,8 @@ const RideDetails: React.FC = () => {
   const { socket } = useRideSocket(ride?.code, ride?.id, setParticipants);
 
   useEffect(() => {
-    console.log("RideDetails: Initializing with ID", id);
     loadRideDetails();
-    // Simulate loading a GPX file for the ride
-    console.log("RideDetails: Setting FULL mock GPX data");
-    setGpxData(`<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1"><trk><trkseg><trkpt lat="48.130107" lon="11.570007"/><trkpt lat="48.130859" lon="11.570326"/><trkpt lat="48.131161" lon="11.569116"/><trkpt lat="48.131355" lon="11.568428"/><trkpt lat="48.131545" lon="11.567971"/><trkpt lat="48.131909" lon="11.567563"/><trkpt lat="48.132263" lon="11.567175"/><trkpt lat="48.132328" lon="11.567041"/><trkpt lat="48.132325" lon="11.566869"/><trkpt lat="48.132074" lon="11.566725"/><trkpt lat="48.131336" lon="11.566463"/><trkpt lat="48.131598" lon="11.565153"/><trkpt lat="48.131856" lon="11.563863"/><trkpt lat="48.131906" lon="11.563745"/><trkpt lat="48.131699" lon="11.563308"/><trkpt lat="48.131841" lon="11.563175"/><trkpt lat="48.132033" lon="11.563114"/><trkpt lat="48.132189" lon="11.563355"/><trkpt lat="48.132356" lon="11.563581"/><trkpt lat="48.132638" lon="11.56366"/><trkpt lat="48.132835" lon="11.563701"/><trkpt lat="48.133047" lon="11.563835"/><trkpt lat="48.133091" lon="11.563914"/><trkpt lat="48.13318" lon="11.563936"/><trkpt lat="48.13335" lon="11.563851"/><trkpt lat="48.134214" lon="11.563569"/><trkpt lat="48.135254" lon="11.563358"/><trkpt lat="48.136075" lon="11.563217"/><trkpt lat="48.136329" lon="11.563173"/><trkpt lat="48.136334" lon="11.562437"/><trkpt lat="48.136336" lon="11.561958"/><trkpt lat="48.136349" lon="11.558617"/><trkpt lat="48.136372" lon="11.557072"/><trkpt lat="48.136381" lon="11.556307"/><trkpt lat="48.136384" lon="11.555866"/><trkpt lat="48.136463" lon="11.55302"/><trkpt lat="48.136668" lon="11.552521"/><trkpt lat="48.136705" lon="11.552325"/><trkpt lat="48.136704" lon="11.551687"/><trkpt lat="48.136772" lon="11.551585"/><trkpt lat="48.13754" lon="11.551607"/><trkpt lat="48.137544" lon="11.550949"/><trkpt lat="48.137551" lon="11.549906"/><trkpt lat="48.137552" lon="11.549653"/><trkpt lat="48.136984" lon="11.549593"/><trkpt lat="48.136875" lon="11.549564"/></trkseg></trk></gpx>`);
-  }, [id]);
+  }, [id, user]);
 
   const loadRideDetails = async () => {
     if (!id) return;
@@ -50,8 +46,33 @@ const RideDetails: React.FC = () => {
       
       // 1. Fetch Ride Public Data (Priority)
       try {
-          const rideData = await ridesApi.getRideById(rideId);
-          setRide(rideData);
+      const rideData = await ridesApi.getRideById(rideId);
+      setRide(rideData);
+
+      // Fetch GPX if present and visible
+      if (rideData.route_id) {
+        const isOwner = rideData.created_by_user_id === user?.id;
+        const isStarted = rideData.is_active;
+        const visibility = rideData.visibility;
+
+        let showRoute = false;
+        if (isOwner) {
+          showRoute = true;
+        } else if (visibility === RouteVisibility.ALWAYS) {
+          showRoute = true;
+        } else if (visibility === RouteVisibility.START && isStarted) {
+          showRoute = true;
+        }
+
+        if (showRoute) {
+          try {
+            const routeData = await routesApi.getRouteById(rideData.route_id);
+            setGpxData(routeData.gpx_data);
+          } catch (rErr) {
+            console.error("Failed to load route data", rErr);
+          }
+        }
+      }
 
           // 2. Fetch Participations (Public)
           try {

@@ -17,6 +17,35 @@ export interface TokenResponse {
   token_type: string;
 }
 
+export enum RouteVisibility {
+  ALWAYS = "always",
+  START = "start",
+  SECRET = "secret",
+}
+
+export interface Route {
+  id: number;
+  title: string;
+  description: string | null;
+  gpx_data: string;
+  distance_meters: number;
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RouteCreate {
+  title: string;
+  description?: string;
+  gpx_data: string;
+}
+
+export interface RouteUpdate {
+  title?: string;
+  description?: string;
+  gpx_data?: string;
+}
+
 export interface Ride {
   id: number;
   code: string;
@@ -27,12 +56,16 @@ export interface Ride {
   created_at: string;
   updated_at: string;
   is_active: boolean;
+  route_id: number | null;
+  visibility: RouteVisibility;
 }
 
 export interface RideCreate {
   title: string;
   description?: string;
   start_time: string;
+  route_id?: number;
+  visibility?: RouteVisibility;
 }
 
 export interface RideUpdate {
@@ -40,6 +73,8 @@ export interface RideUpdate {
   description?: string;
   start_time?: string;
   is_active?: boolean;
+  route_id?: number;
+  visibility?: RouteVisibility;
 }
 
 export interface Participation {

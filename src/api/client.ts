@@ -6,6 +6,9 @@ import type {
   Ride,
   RideCreate,
   RideUpdate,
+  Route,
+  RouteCreate,
+  RouteUpdate,
   Participation,
   ParticipationCreate,
   ParticipationUpdate,
@@ -68,6 +71,38 @@ export const authApi = {
   getCurrentUser: async (): Promise<User> => {
     const response = await api.get<User>('/auth/me');
     return response.data;
+  },
+};
+
+// Routes API
+export const routesApi = {
+  getRoutes: async (): Promise<Route[]> => {
+    const response = await api.get<Route[]>('/routes/');
+    return response.data;
+  },
+
+  getOwnedRoutes: async (): Promise<Route[]> => {
+    const response = await api.get<Route[]>('/routes/owned');
+    return response.data;
+  },
+
+  getRouteById: async (id: number): Promise<Route> => {
+    const response = await api.get<Route>(`/routes/${id}`);
+    return response.data;
+  },
+
+  createRoute: async (data: RouteCreate): Promise<Route> => {
+    const response = await api.post<Route>('/routes/', data);
+    return response.data;
+  },
+
+  updateRoute: async (id: number, data: RouteUpdate): Promise<Route> => {
+    const response = await api.put<Route>(`/routes/${id}`, data);
+    return response.data;
+  },
+
+  deleteRoute: async (id: number): Promise<void> => {
+    await api.delete(`/routes/${id}`);
   },
 };
 

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ridesApi } from '../api/client';
+import { RouteVisibility } from '../api/types';
 import type { RideCreate } from '../api/types';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Card from '../components/ui/Card';
 import { Type, FileText, Calendar, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
+import RouteSelector from '../components/Ride/RouteSelector';
 
 const CreateRide: React.FC = () => {
   const [title, setTitle] = useState('');
@@ -16,6 +18,8 @@ const CreateRide: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [createdRide, setCreatedRide] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
+  const [routeId, setRouteId] = useState<number | undefined>();
+  const [visibility, setVisibility] = useState<RouteVisibility>(RouteVisibility.ALWAYS);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -23,17 +27,29 @@ const CreateRide: React.FC = () => {
     setError('');
     setLoading(true);
 
+    const startDate = new Date(startTime);
+    if (isNaN(startDate.getTime())) {
+      setError('Please select a valid start time');
+      setLoading(false);
+      return;
+    }
+
     try {
       const rideData: RideCreate = {
         title,
         description: description || undefined,
-        start_time: new Date(startTime).toISOString(),
+        start_time: startDate.toISOString(),
+        route_id: routeId,
+        visibility: visibility,
       };
 
       const newRide = await ridesApi.createRide(rideData);
       setCreatedRide(newRide);
     } catch (err: any) {
       console.error('Error creating ride:', err);
+      if (err.response?.data) {
+        console.error('Validation details:', JSON.stringify(err.response.data, null, 2));
+      }
       setError(err.response?.data?.detail || 'Error creating ride');
     } finally {
       setLoading(false);
@@ -157,6 +173,13 @@ const CreateRide: React.FC = () => {
               onChange={(e) => setStartTime(e.target.value)}
               required
               icon={Calendar}
+            />
+
+            <RouteSelector 
+              onRouteSelect={setRouteId}
+              onVisibilityChange={setVisibility}
+              selectedRouteId={routeId}
+              visibility={visibility}
             />
 
             <div className="pt-4 flex gap-4">
